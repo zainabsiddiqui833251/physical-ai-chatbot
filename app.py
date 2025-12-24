@@ -8,11 +8,7 @@ from llama_index.core import PromptTemplate
 @st.cache_resource(show_spinner=False)
 def load_index():
     # Load all .md files from the docs folder
-    reader = SimpleDirectoryReader(
-        input_dir="../docs/",
-        recursive=True,
-        required_exts=[".md"]
-    )
+    reader = SimpleDirectoryReader(input_dir="docs/", recursive=True, required_exts=[".md"])
     docs = reader.load_data()
 
     # Embedding model (small, fast, good quality)
