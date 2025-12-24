@@ -1,9 +1,8 @@
 streamlit
 llama-index-core
-llama-index-llms-ollama
 llama-index-embeddings-huggingface
+llama-index-llms-groq
 llama-index-readers-file
 torch
 transformers
 huggingface-hub
-sentence-transformers

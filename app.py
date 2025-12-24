@@ -1,90 +1,56 @@
 import streamlit as st
 from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Settings
-from llama_index.llms.ollama import Ollama
+from llama_index.llms.groq import Groq
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.core import PromptTemplate
+import os
 
-# Load index with caching
-@st.cache_resource(show_spinner=False)
+# Set your Groq API key (add as Streamlit Secret – see below)
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+
+if not GROQ_API_KEY:
+    st.error("Please set GROQ_API_KEY in Streamlit Secrets (Manage app → Secrets)")
+    st.stop()
+
+@st.cache_resource
 def load_index():
-    # Load all .md files from the docs folder
-    reader = SimpleDirectoryReader(input_dir="docs/", recursive=True, required_exts=[".md"])
-    docs = reader.load_data()
+    with st.spinner("Indexing your book – this takes 2–5 minutes on first load..."):
+        reader = SimpleDirectoryReader(input_dir="docs/", recursive=True, required_exts=[".md"])
+        docs = reader.load_data()
+        st.info(f"Loaded {len(docs)} chunks from your book")
 
-    # Embedding model (small, fast, good quality)
-    embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-    Settings.embed_model = embed_model
+        # Small & fast embedding model
+        embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        Settings.embed_model = embed_model
 
-    # LLM via Ollama
-    llm = Ollama(model="llama3.2:1b", request_timeout=120.0 , temperature=0.1) 
-    Settings.llm = llm
+        index = VectorStoreIndex.from_documents(docs, show_progress=True)
 
-    # Create vector index
-    index = VectorStoreIndex.from_documents(docs)
+        # Groq LLM (fast & free tier)
+        llm = Groq(model="llama-3.1-8b-instant", api_key=GROQ_API_KEY, temperature=0.3)
+        Settings.llm = llm
 
-    # Custom QA prompt to keep responses grounded
-    qa_prompt_tmpl_str = (
-        "You are a helpful assistant answering questions about the Physical AI book. "
-        "Use ONLY the context provided below to answer. "
-        "If the answer is not in the context, respond with: 'Not covered in the book.'\n\n"
-        "Context:\n"
-        "---------------------\n"
-        "{context_str}\n"
-        "---------------------\n\n"
-        "Question: {query_str}\n"
-        "Answer: "
-    )
-    qa_prompt = PromptTemplate(qa_prompt_tmpl_str)
+        query_engine = index.as_query_engine(streaming=True, similarity_top_k=5)
+        return query_engine
 
-    # Create query engine with streaming and custom prompt
-    query_engine = index.as_query_engine(
-        streaming=True,
-        similarity_top_k=4,
-        text_qa_template=qa_prompt  # Correct way to set custom prompt
-    )
-
-    return query_engine
-
-
-# Load the index (cached)
 query_engine = load_index()
 
-# Streamlit UI
 st.title("🤖 Physical AI & Humanoid Robots Book Assistant")
-st.caption("Ask questions — answers are grounded in your course book content!")
+st.caption("Ask anything — answers from your course book only!")
 
-# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input
-if query := st.chat_input("Ask a question about Physical AI or humanoid robots..."):
-    # Add user message
+if query := st.chat_input("Ask a question about the course..."):
     st.session_state.messages.append({"role": "user", "content": query})
     with st.chat_message("user"):
         st.markdown(query)
 
-    # Generate and stream assistant response
     with st.chat_message("assistant"):
-        with st.spinner("Searching the book and thinking..."):
-            # Placeholder for streaming output
-            response_placeholder = st.empty()
-            full_response = ""
+        with st.spinner("Thinking..."):
+            response = query_engine.query(query)
+            st.markdown(str(response))
 
-            # Stream the response token by token
-            streaming_response = query_engine.query(query)
-            
-            for token in streaming_response.response_gen:
-                full_response += token
-                response_placeholder.markdown(full_response + "▌")  # Cursor effect
-
-            # Final clean response (without cursor)
-            response_placeholder.markdown(full_response)
-
-    # Save assistant response to history
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+    st.session_state.messages.append({"role": "assistant", "content": str(response)})
